@@ -20,15 +20,15 @@
   // -------- Utilities --------
   function $(id) { return document.getElementById(id); }
 
-  function getProgramAcronym(container) {
-    const explicit = container.getAttribute("data-program-acronym");
+  function getSchool(container) {
+    const explicit = container.getAttribute("data-school");
     if (explicit) return explicit.trim();
 
-    const meta = document.querySelector('meta[name="program_acronym"]');
+    const meta = document.querySelector('meta[name="school"]');
     if (meta && meta.content) return meta.content.trim();
 
     const url = new URL(window.location.href);
-    const qp = url.searchParams.get("program_acronym") || url.searchParams.get("program");
+    const qp = url.searchParams.get("school") || url.searchParams.get("school");
     if (qp) return qp.trim();
 
     return null;
@@ -174,8 +174,8 @@
       return;
     }
 
-    const program = getProgramAcronym(container);
-    if (!program) {
+    const school = getSchool(container);
+    if (!school) {
       showError(container, "Program acronym not found.");
       return;
     }
@@ -211,13 +211,13 @@
 
       // Find the matching program row (case-insensitive)
       const match = rows.find(r => {
-        const k = firstKey(r, fieldMap.program);
+        const k = firstKey(r, fieldMap.school);
         if (!k) return false;
-        return String(r[k]).trim().toLowerCase() === program.trim().toLowerCase();
+        return String(r[k]).trim().toLowerCase() === school.trim().toLowerCase();
       });
 
       if (!match) {
-        showError(container, `No tuition data found for program "${program}".`);
+        showError(container, `No tuition data found for school "${school}".`);
         return;
       }
 
