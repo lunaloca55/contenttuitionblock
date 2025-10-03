@@ -1,0 +1,250 @@
+<!-- 1) Drop this container where you want the block to appear -->
+<div
+  id="tuition-block"
+  data-source="https://YOUR-API-ENDPOINT/tuition"   <!-- JSON or CSV -->
+  data-program-acronym="BSHI"                        <!-- Optional; can come from meta or URL -->
+  data-currency="USD"                                <!-- Optional; defaults to USD -->
+  data-locale="en-US"                                <!-- Optional; for number formatting -->
+></div>
+
+<!-- 2) Include this script (inline or as its own file) -->
+<script>
+(function () {
+  // -------- Config you can tweak (or leave as-is) --------
+  const fieldMap = {
+    program: ["PROGRAM_ACRONYM", "program_acronym", "program", "acronym"],
+    fullTime: ["FULLTIME_TERM_RATE", "fulltime_term_rate", "full_time_term_rate"],
+    partTime: ["PARTTIME_CREDIT_RATE", "parttime_credit_rate", "part_time_credit_rate"],
+    updatedAt: ["UPDATED_AT", "updated_at", "last_updated", "effective_term"]
+  };
+
+  // -------- Utilities --------
+  function $(id) { return document.getElementById(id); }
+
+  function getProgramAcronym(container) {
+    const explicit = container.getAttribute("data-program-acronym");
+    if (explicit) return explicit.trim();
+
+    const meta = document.querySelector('meta[name="program_acronym"]');
+    if (meta && meta.content) return meta.content.trim();
+
+    const url = new URL(window.location.href);
+    const qp = url.searchParams.get("program_acronym") || url.searchParams.get("program");
+    if (qp) return qp.trim();
+
+    return null;
+  }
+
+  function detectContentType(resp) {
+    const ct = resp.headers.get("Content-Type") || "";
+    if (ct.includes("application/json")) return "json";
+    if (ct.includes("text/csv") || ct.includes("application/csv")) return "csv";
+    // Fall back based on URL extension
+    return "auto";
+  }
+
+  function parseCSV(text) {
+    // Minimal CSV parser (handles quoted fields and commas)
+    const rows = [];
+    let i = 0, field = "", row = [], inQuotes = false;
+
+    while (i < text.length) {
+      const char = text[i];
+      if (inQuotes) {
+        if (char === '"') {
+          if (text[i + 1] === '"') { field += '"'; i++; } else { inQuotes = false; }
+        } else { field += char; }
+      } else {
+        if (char === '"') inQuotes = true;
+        else if (char === ",") { row.push(field); field = ""; }
+        else if (char === "\n" || char === "\r") {
+          if (field.length || row.length) { row.push(field); rows.push(row); row = []; field = ""; }
+          // Normalize CRLF/LF
+          if (char === "\r" && text[i + 1] === "\n") i++;
+        } else { field += char; }
+      }
+      i++;
+    }
+    if (field.length || row.length) { row.push(field); rows.push(row); }
+
+    if (!rows.length) return [];
+    const headers = rows[0].map(h => (h || "").trim());
+    return rows.slice(1).map(r => {
+      const obj = {};
+      headers.forEach((h, idx) => { obj[h] = (r[idx] || "").trim(); });
+      return obj;
+    });
+  }
+
+  function firstKey(obj, candidates) {
+    for (const k of candidates) {
+      if (k in obj) return k;
+      // case-insensitive match
+      const found = Object.keys(obj).find(ok => ok.toLowerCase() === k.toLowerCase());
+      if (found) return found;
+    }
+    return null;
+  }
+
+  function toNumber(val) {
+    if (typeof val === "number") return val;
+    if (typeof val !== "string") return NaN;
+    // remove $ , and spaces
+    const cleaned = val.replace(/[\$,]/g, "").trim();
+    return Number(cleaned);
+  }
+
+  function formatMoney(num, locale, currency) {
+    if (Number.isFinite(num)) {
+      try {
+        return new Intl.NumberFormat(locale || "en-US", {
+          style: "currency",
+          currency: currency || "USD",
+          maximumFractionDigits: 2
+        }).format(num);
+      } catch {
+        return `$${num.toLocaleString()}`;
+      }
+    }
+    return "—";
+  }
+
+  function renderSkeleton(container) {
+    container.innerHTML = `
+      <div id="tuition-inner">
+        <div id="tuition-header">
+          <h2 id="tuition-title">Tuition</h2>
+        </div>
+        <div id="tuition-content" aria-live="polite">
+          <div id="tuition-loader">Loading tuition…</div>
+        </div>
+        <div id="tuition-footer">
+          <small id="tuition-updated" aria-hidden="true"></small>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderRates(container, rates, locale, currency, updatedText) {
+    const content = container.querySelector("#tuition-content");
+    const full = formatMoney(rates.full, locale, currency);
+    const part = formatMoney(rates.part, locale, currency);
+
+    content.innerHTML = `
+      <div id="tuition-rows">
+        <div id="tuition-row-fulltime">
+          <span id="tuition-label-fulltime">Full-time (per term)</span>
+          <span id="fulltime-term-rate">${full}</span>
+        </div>
+        <div id="tuition-row-parttime">
+          <span id="tuition-label-parttime">Part-time (per credit)</span>
+          <span id="parttime-credit-rate">${part}</span>
+        </div>
+      </div>
+      <div id="tuition-error" role="alert" hidden></div>
+    `;
+
+    const upd = container.querySelector("#tuition-updated");
+    if (updatedText) {
+      upd.textContent = `Updated: ${updatedText}`;
+      upd.removeAttribute("aria-hidden");
+    } else {
+      upd.textContent = "";
+      upd.setAttribute("aria-hidden", "true");
+    }
+  }
+
+  function showError(container, message) {
+    const content = container.querySelector("#tuition-content");
+    content.innerHTML = `
+      <div id="tuition-rows"></div>
+      <div id="tuition-error" role="alert">${message}</div>
+    `;
+  }
+
+  // -------- Main render --------
+  async function initTuitionBlock() {
+    const container = $("tuition-block");
+    if (!container) return;
+
+    renderSkeleton(container);
+
+    const source = container.getAttribute("data-source");
+    if (!source) {
+      showError(container, "Tuition source is not configured.");
+      return;
+    }
+
+    const program = getProgramAcronym(container);
+    if (!program) {
+      showError(container, "Program acronym not found.");
+      return;
+    }
+
+    const locale = container.getAttribute("data-locale") || "en-US";
+    const currency = container.getAttribute("data-currency") || "USD";
+
+    try {
+      const resp = await fetch(source, { headers: { "Accept": "application/json,text/csv;q=0.9,*/*;q=0.8" } });
+      if (!resp.ok) throw new Error(`Request failed: ${resp.status}`);
+
+      let rows = [];
+      const mode = detectContentType(resp);
+      if (mode === "json") {
+        const data = await resp.json();
+        rows = Array.isArray(data) ? data : (Array.isArray(data.rows) ? data.rows : []);
+      } else if (mode === "csv" || mode === "auto") {
+        const text = await resp.text();
+        // Try JSON fallback if CSV parse finds nothing
+        try {
+          const maybeJSON = JSON.parse(text);
+          rows = Array.isArray(maybeJSON) ? maybeJSON : (Array.isArray(maybeJSON.rows) ? maybeJSON.rows : []);
+          if (!rows.length) rows = parseCSV(text);
+        } catch {
+          rows = parseCSV(text);
+        }
+      }
+
+      if (!rows || !rows.length) {
+        showError(container, "No tuition data returned.");
+        return;
+      }
+
+      // Find the matching program row (case-insensitive)
+      const match = rows.find(r => {
+        const k = firstKey(r, fieldMap.program);
+        if (!k) return false;
+        return String(r[k]).trim().toLowerCase() === program.trim().toLowerCase();
+      });
+
+      if (!match) {
+        showError(container, `No tuition data found for program "${program}".`);
+        return;
+      }
+
+      const kFull = firstKey(match, fieldMap.fullTime);
+      const kPart = firstKey(match, fieldMap.partTime);
+      const kUpd  = firstKey(match, fieldMap.updatedAt);
+
+      const full = toNumber(match[kFull]);
+      const part = toNumber(match[kPart]);
+      const updatedText = kUpd ? String(match[kUpd]).trim() : "";
+
+      renderRates(container, { full, part }, locale, currency, updatedText);
+    } catch (e) {
+      showError(container, "There was a problem loading tuition data.");
+      console.error("[Tuition Block]", e);
+    }
+  }
+
+  // Expose a manual re-render hook if you need it elsewhere.
+  window.renderTuitionBlock = initTuitionBlock;
+
+  // Auto-run
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initTuitionBlock);
+  } else {
+    initTuitionBlock();
+  }
+})();
+</script>
