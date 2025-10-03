@@ -5,6 +5,7 @@
   data-program-acronym="Swanson School of Engineering"                        <!-- Optional; can come from meta or URL -->
   data-currency="USD"                                <!-- Optional; defaults to USD -->
   data-locale="en-US"                                <!-- Optional; for number formatting -->
+  data-school="Swanson School of Engineering"
 ></div>
 
 <!-- 2) Include this script (inline or as its own file) -->
@@ -12,7 +13,7 @@
 (function () {
   // -------- Config you can tweak (or leave as-is) --------
   const fieldMap = {
-    school: ["SCHOOL", "school", "school", "acronym"],
+    school: ["SCHOOL", "school"],
     fullTime: ["FULLTIME_TERM_RATE", "fulltime_term_rate", "full_time_term_rate"],
     partTime: ["PARTTIME_CREDIT_RATE", "parttime_credit_rate", "part_time_credit_rate"],
   };
